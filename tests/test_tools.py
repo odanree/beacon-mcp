@@ -1,0 +1,138 @@
+"""Tests for the Beacon API wrappers — HTTP fully mocked, no network."""
+
+from __future__ import annotations
+
+import httpx
+import pytest
+import respx
+
+import server.config as cfg_module
+from server.tools.client import BeaconAuthError, BeaconHTTPError, request
+from server.tools.jobs import get_job, list_jobs
+from server.tools.profile import ProjectCreate, add_project, list_projects
+
+
+@pytest.fixture(autouse=True)
+def _set_jwt(monkeypatch):
+    """Every test runs as if a JWT is configured."""
+    monkeypatch.setattr(cfg_module.settings, "beacon_jwt", "test-jwt-token")
+    monkeypatch.setattr(cfg_module.settings, "beacon_api_url", "https://beacon.test")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_add_project_posts_and_returns_envelope():
+    route = respx.post("https://beacon.test/api/profile/projects").mock(
+        return_value=httpx.Response(201, json={
+            "id": "abc-123", "name": "infra-mcp", "url": "https://github.com/x/infra-mcp",
+            "tech_stack": ["MCP", "FastMCP"], "description": "d", "outcome": "o",
+            "start_date": "2026-06-08", "end_date": None,
+        })
+    )
+    p = ProjectCreate(name="infra-mcp", url="https://github.com/x/infra-mcp",
+                      tech_stack=["MCP", "FastMCP"], description="d", outcome="o",
+                      start_date="2026-06-08")
+    out = await add_project(p)
+    assert out.id == "abc-123"
+    assert out.tech_stack == ["MCP", "FastMCP"]
+    body = route.calls[0].request.content.decode()
+    assert "infra-mcp" in body
+    assert route.calls[0].request.headers["Authorization"] == "Bearer test-jwt-token"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_projects_returns_empty_when_envelope_is_not_a_list():
+    respx.get("https://beacon.test/api/profile/projects").mock(
+        return_value=httpx.Response(200, json={"unexpected": "shape"}),
+    )
+    rows = await list_projects()
+    assert rows == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_request_raises_auth_error_on_401():
+    respx.get("https://beacon.test/api/profile/projects").mock(
+        return_value=httpx.Response(401, json={"detail": "expired"})
+    )
+    with pytest.raises(BeaconAuthError) as e:
+        await request("GET", "/api/profile/projects")
+    assert "expired" in str(e.value).lower() or "401" in str(e.value)
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_request_raises_http_error_on_5xx():
+    respx.get("https://beacon.test/api/jobs").mock(
+        return_value=httpx.Response(503, text="upstream down")
+    )
+    with pytest.raises(BeaconHTTPError) as e:
+        await request("GET", "/api/jobs")
+    assert "503" in str(e.value)
+
+
+@pytest.mark.asyncio
+async def test_request_requires_jwt(monkeypatch):
+    monkeypatch.setattr(cfg_module.settings, "beacon_jwt", "")
+    with pytest.raises(BeaconAuthError):
+        await request("GET", "/api/profile/projects")
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_jobs_passes_status_and_limit_params():
+    route = respx.get("https://beacon.test/api/jobs").mock(
+        return_value=httpx.Response(200, json=[{
+            "id": "job-1", "title": "Sr ML Engineer", "company": "Foo",
+            "status": "screen", "score": 8.4,
+        }]),
+    )
+    rows = await list_jobs(status="screen", limit=10)
+    assert len(rows) == 1
+    assert rows[0].score == 8.4
+    params = dict(route.calls[0].request.url.params)
+    assert params == {"limit": "10", "status": "screen"}
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_jobs_clamps_limit():
+    captured = {}
+
+    def _capture(request):
+        captured.update(dict(request.url.params))
+        return httpx.Response(200, json=[])
+
+    respx.get("https://beacon.test/api/jobs").mock(side_effect=_capture)
+    await list_jobs(limit=999999)
+    assert captured["limit"] == "100"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_jobs_handles_envelope_with_items_key():
+    """Beacon's job list can come back as {items: [...]} on some endpoints."""
+    respx.get("https://beacon.test/api/jobs").mock(
+        return_value=httpx.Response(200, json={"items": [
+            {"id": "j-1", "title": "A"},
+            {"id": "j-2", "title": "B"},
+        ]}),
+    )
+    rows = await list_jobs()
+    assert {r.id for r in rows} == {"j-1", "j-2"}
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_job_returns_full_detail():
+    respx.get("https://beacon.test/api/jobs/abc-1").mock(
+        return_value=httpx.Response(200, json={
+            "id": "abc-1", "title": "Sr AI", "description": "long JD text",
+            "requirements": ["python", "langgraph", "rag"],
+        }),
+    )
+    out = await get_job("abc-1")
+    assert out.id == "abc-1"
+    assert out.description == "long JD text"
+    assert out.requirements == ["python", "langgraph", "rag"]
