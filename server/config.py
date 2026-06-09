@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# When Claude Code launches the MCP server it sets its own CWD, so a
+# relative .env path won't find ours. Resolve to the repo root absolutely.
+_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(_ENV_PATH), extra="ignore")
 
     # Empty defaults force the operator to point at their own Beacon instance.
     # We don't want a real URL in the source so a forked clone can't
