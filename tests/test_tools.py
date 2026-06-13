@@ -9,7 +9,13 @@ import respx
 import server.config as cfg_module
 from server.tools.client import BeaconAuthError, BeaconHTTPError, request
 from server.tools.jobs import get_job, list_jobs
-from server.tools.profile import ProjectCreate, add_project, list_projects
+from server.tools.profile import (
+    ProjectCreate,
+    ProjectUpdate,
+    add_project,
+    list_projects,
+    update_project,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +43,28 @@ async def test_add_project_posts_and_returns_envelope():
     assert out.tech_stack == ["MCP", "FastMCP"]
     body = route.calls[0].request.content.decode()
     assert "infra-mcp" in body
+    assert route.calls[0].request.headers["Authorization"] == "Bearer test-jwt-token"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_project_patches_only_supplied_fields():
+    route = respx.patch("https://beacon.test/api/profile/projects/abc-123").mock(
+        return_value=httpx.Response(200, json={
+            "id": "abc-123", "name": "parking-enforcement-detector",
+            "url": "https://github.com/odanree/parking-enforcement-detector",
+            "tech_stack": [], "description": None, "outcome": None,
+            "start_date": None, "end_date": None,
+        })
+    )
+    out = await update_project(
+        "abc-123",
+        ProjectUpdate(url="https://github.com/odanree/parking-enforcement-detector"),
+    )
+    assert out.url == "https://github.com/odanree/parking-enforcement-detector"
+    body = route.calls[0].request.content.decode()
+    assert "url" in body
+    assert "name" not in body  # exclude_unset=True dropped the other fields
     assert route.calls[0].request.headers["Authorization"] == "Bearer test-jwt-token"
 
 

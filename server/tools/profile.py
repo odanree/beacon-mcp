@@ -24,6 +24,18 @@ class ProjectCreate(BaseModel):
     end_date: str | None = None
 
 
+class ProjectUpdate(BaseModel):
+    """Mirrors Beacon's PATCH /api/profile/projects/{id} body. All fields optional."""
+
+    name: str | None = None
+    description: str | None = None
+    url: str | None = None
+    tech_stack: list[str] | None = None
+    outcome: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+
+
 class ProjectSummary(BaseModel):
     """Beacon's project envelope as the tool surfaces it back to the LLM."""
 
@@ -55,3 +67,17 @@ async def list_projects(*, client: httpx.AsyncClient | None = None) -> list[Proj
     if not isinstance(out, list):
         return []
     return [ProjectSummary.model_validate(p) for p in out]
+
+
+async def update_project(
+    project_id: str,
+    p: ProjectUpdate,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> ProjectSummary:
+    """PATCH an existing project. Only supplied fields are touched."""
+    payload = p.model_dump(exclude_unset=True)
+    out = await request(
+        "PATCH", f"/api/profile/projects/{project_id}", json=payload, client=client
+    )
+    return ProjectSummary.model_validate(out)
