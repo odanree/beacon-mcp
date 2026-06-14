@@ -70,6 +70,31 @@ async def test_update_project_patches_only_supplied_fields():
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_beacon_update_project_tool_omits_none_defaults():
+    """Regression: tool was sending {name: null, ...} which 500'd against the
+    NOT NULL `name` column. Now it should drop None defaults before the PATCH."""
+    from server.main import beacon_update_project
+
+    route = respx.patch("https://beacon.test/api/profile/projects/abc-123").mock(
+        return_value=httpx.Response(200, json={
+            "id": "abc-123", "name": "x",
+            "url": "https://github.com/x/y",
+            "tech_stack": [], "description": None, "outcome": None,
+            "start_date": None, "end_date": None,
+        })
+    )
+    out = await beacon_update_project(
+        project_id="abc-123", url="https://github.com/x/y"
+    )
+    assert out["ok"] is True
+    body = route.calls[0].request.content.decode()
+    assert '"url"' in body
+    for absent in ('"name"', '"description"', '"tech_stack"', '"outcome"', '"start_date"', '"end_date"'):
+        assert absent not in body, f"PATCH body should not include {absent}: {body}"
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_list_projects_returns_empty_when_envelope_is_not_a_list():
     respx.get("https://beacon.test/api/profile/projects").mock(
         return_value=httpx.Response(200, json={"unexpected": "shape"}),

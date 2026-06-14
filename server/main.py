@@ -111,19 +111,24 @@ async def beacon_update_project(
         start_date:  YYYY-MM-DD, or omit to leave unchanged.
         end_date:    YYYY-MM-DD, or omit to leave unchanged.
     """
+    # Only pass kwargs the caller actually supplied — otherwise Pydantic marks
+    # every None as "set" and exclude_unset can't strip them, so the PATCH
+    # body would clear unrelated fields (and hit NOT NULL on `name`).
+    supplied = {
+        k: v
+        for k, v in {
+            "name": name,
+            "description": description,
+            "url": url,
+            "tech_stack": tech_stack,
+            "outcome": outcome,
+            "start_date": start_date,
+            "end_date": end_date,
+        }.items()
+        if v is not None
+    }
     try:
-        result = await update_project(
-            project_id,
-            ProjectUpdate(
-                name=name,
-                description=description,
-                url=url,
-                tech_stack=tech_stack,
-                outcome=outcome,
-                start_date=start_date,
-                end_date=end_date,
-            ),
-        )
+        result = await update_project(project_id, ProjectUpdate(**supplied))
         return {"ok": True, "project": result.model_dump()}
     except BeaconAuthError as e:
         return _err(e, "auth")
