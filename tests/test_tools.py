@@ -138,12 +138,21 @@ async def test_list_jobs_passes_status_and_limit_params():
     route = respx.get("https://beacon.test/api/jobs").mock(
         return_value=httpx.Response(200, json=[{
             "id": "job-1", "title": "Sr ML Engineer", "company": "Foo",
-            "status": "screen", "score": 8.4,
+            "application_status": "screen",
+            "score": {
+                "preference_score": 8.4,
+                "fit_score": 9.1,
+                "composite_score": 8.82,
+                "scored_with_rag": True,
+            },
         }]),
     )
     rows = await list_jobs(status="screen", limit=10)
     assert len(rows) == 1
-    assert rows[0].score == 8.4
+    assert rows[0].application_status == "screen"
+    assert rows[0].score is not None
+    assert rows[0].score.preference_score == 8.4
+    assert rows[0].score.composite_score == 8.82
     params = dict(route.calls[0].request.url.params)
     assert params == {"limit": "10", "status": "screen"}
 
@@ -181,11 +190,40 @@ async def test_list_jobs_handles_envelope_with_items_key():
 async def test_get_job_returns_full_detail():
     respx.get("https://beacon.test/api/jobs/abc-1").mock(
         return_value=httpx.Response(200, json={
-            "id": "abc-1", "title": "Sr AI", "description": "long JD text",
-            "requirements": ["python", "langgraph", "rag"],
+            "id": "abc-1",
+            "title": "Sr AI",
+            "description_raw": "raw JD text",
+            "description_clean": "cleaned JD text",
+            "notes": "recruiter reached out day 1",
+            "score": {
+                "preference_score": 3.5,
+                "fit_score": 8.0,
+                "composite_score": 6.2,
+                "scored_with_rag": False,
+            },
         }),
     )
     out = await get_job("abc-1")
     assert out.id == "abc-1"
-    assert out.description == "long JD text"
-    assert out.requirements == ["python", "langgraph", "rag"]
+    assert out.description_clean == "cleaned JD text"
+    assert out.description_raw == "raw JD text"
+    assert out.notes == "recruiter reached out day 1"
+    assert out.score is not None
+    assert out.score.preference_score == 3.5
+    assert out.score.scored_with_rag is False
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_get_job_tolerates_unscored_row():
+    """Early-pipeline jobs have no score object — must not blow up."""
+    respx.get("https://beacon.test/api/jobs/pending-1").mock(
+        return_value=httpx.Response(200, json={
+            "id": "pending-1",
+            "title": "Fresh scrape",
+            "score": None,
+        }),
+    )
+    out = await get_job("pending-1")
+    assert out.id == "pending-1"
+    assert out.score is None
