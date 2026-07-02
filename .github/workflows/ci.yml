@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  # Nightly re-check so upstream JSP schema drift is surfaced within 24h
+  # even when nobody's opened a beacon-mcp PR. The contract test skips
+  # gracefully if upstream openapi.json is unreachable.
+  schedule:
+    - cron: "17 6 * * *"
+
+jobs:
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - run: ruff check server tests
+
+  test:
+    name: Pytest (unit + contract)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install project + dev deps
+        run: pip install -e ".[dev]"
+      # Unit tests + upstream-schema contract test. The contract test
+      # skips gracefully when JSP's openapi.json is unreachable
+      # (network down, or JSP hasn't published yet) — the schedule run
+      # will catch drift as soon as upstream comes back online.
+      - name: Run tests
+        run: python -m pytest -v
