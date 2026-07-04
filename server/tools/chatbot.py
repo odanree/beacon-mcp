@@ -76,11 +76,24 @@ async def refresh_chatbot_rag(commit_message: str | None = None) -> dict:
             f"AI_CHATBOT_PATH '{repo}' is not a git checkout.",
         )
 
-    # Pick npm binary. On Windows Git Bash / PowerShell, `npm` resolves to
-    # `npm.cmd`; asyncio's exec on Windows won't find `npm` alone.
-    npm = shutil.which("npm") or shutil.which("npm.cmd")
-    if not npm:
-        raise ChatbotRefreshError("config", "npm not found on PATH.")
+    # Resolve bun directly. The Claude Code-launched MCP subprocess inherits a
+    # narrow PATH that often lacks the user's `~/.bun/bin`, so relying on
+    # `npm run build:knowledge → bun` was hanging for 10+ minutes before
+    # bailing. Bypass npm entirely and invoke bun with an absolute path.
+    bun = shutil.which("bun") or shutil.which("bun.exe")
+    if not bun:
+        # Common Windows install location — Claude Code's env often misses it
+        # despite the user having `bun` on their interactive shell PATH.
+        home = Path.home()
+        candidate = home / ".bun" / "bin" / "bun.exe"
+        if candidate.exists():
+            bun = str(candidate)
+    if not bun:
+        raise ChatbotRefreshError(
+            "config",
+            "bun not found on PATH or at ~/.bun/bin/bun.exe. "
+            "Install bun (https://bun.sh) or add it to the MCP process's PATH.",
+        )
     git = shutil.which("git")
     if not git:
         raise ChatbotRefreshError("config", "git not found on PATH.")
@@ -90,11 +103,13 @@ async def refresh_chatbot_rag(commit_message: str | None = None) -> dict:
         "BEACON_API_URL": settings.beacon_api_url,
         "BEACON_JWT": settings.beacon_jwt,
     }
-    rc, out, err = await _run([npm, "run", "build:knowledge"], repo, build_env)
+    rc, out, err = await _run(
+        [bun, "run", "src/knowledge/build.ts"], repo, build_env,
+    )
     if rc != 0:
         raise ChatbotRefreshError(
             "build",
-            f"npm run build:knowledge exited with code {rc}",
+            f"bun run src/knowledge/build.ts exited with code {rc}",
             detail=(err or out)[-2000:],
         )
 
