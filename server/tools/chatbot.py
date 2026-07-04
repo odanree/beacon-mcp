@@ -34,8 +34,15 @@ async def _run(
     cmd: list[str],
     cwd: Path,
     env_extra: dict[str, str] | None = None,
+    timeout: float = 60.0,
 ) -> tuple[int, str, str]:
-    """Run a subprocess, capturing stdout+stderr as text."""
+    """Run a subprocess, capturing stdout+stderr as text.
+
+    stdin is wired to DEVNULL so a child that tries to read (e.g. Windows
+    git-credential-manager prompting for GitHub creds when there's no TTY)
+    fails fast with EOF instead of hanging the MCP call. A timeout guards
+    against any other silent stall — raises ChatbotRefreshError('timeout').
+    """
     import os
 
     env = dict(os.environ)
@@ -45,10 +52,23 @@ async def _run(
         *cmd,
         cwd=str(cwd),
         env=env,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    out_b, err_b = await proc.communicate()
+    try:
+        out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+        raise ChatbotRefreshError(
+            "timeout",
+            f"{cmd[0]} did not complete within {timeout:.0f}s — killed.",
+            detail=f"cmd={cmd!r}",
+        )
     return proc.returncode or 0, out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace")
 
 
@@ -104,7 +124,7 @@ async def refresh_chatbot_rag(commit_message: str | None = None) -> dict:
         "BEACON_JWT": settings.beacon_jwt,
     }
     rc, out, err = await _run(
-        [bun, "run", "src/knowledge/build.ts"], repo, build_env,
+        [bun, "run", "src/knowledge/build.ts"], repo, build_env, timeout=180.0,
     )
     if rc != 0:
         raise ChatbotRefreshError(
@@ -113,9 +133,19 @@ async def refresh_chatbot_rag(commit_message: str | None = None) -> dict:
             detail=(err or out)[-2000:],
         )
 
+    # Force non-interactive git for every subsequent step: no terminal prompt,
+    # no GCM UI, no askpass helper. If credentials aren't already cached
+    # (Windows Credential Manager / gh CLI), git push will fail fast instead
+    # of hanging the MCP call waiting for a UI that has no TTY to bind to.
+    git_env = {
+        "GIT_TERMINAL_PROMPT": "0",
+        "GCM_INTERACTIVE": "Never",
+        "GIT_ASKPASS": "",
+    }
+
     # Was the index actually changed?
     rc, out, err = await _run(
-        [git, "diff", "--quiet", "--", "data/knowledge.json"], repo,
+        [git, "diff", "--quiet", "--", "data/knowledge.json"], repo, git_env, timeout=15.0,
     )
     if rc == 0:
         return {
@@ -126,21 +156,21 @@ async def refresh_chatbot_rag(commit_message: str | None = None) -> dict:
         }
 
     # Stage + commit
-    rc, _, err = await _run([git, "add", "data/knowledge.json"], repo)
+    rc, _, err = await _run([git, "add", "data/knowledge.json"], repo, git_env, timeout=15.0)
     if rc != 0:
         raise ChatbotRefreshError("git", "git add failed", detail=err[-2000:])
 
     msg = commit_message or "chore(rag): refresh knowledge.json from Beacon\n\nvia beacon-mcp refresh_chatbot_rag."
-    rc, _, err = await _run([git, "commit", "-m", msg], repo)
+    rc, _, err = await _run([git, "commit", "-m", msg], repo, git_env, timeout=30.0)
     if rc != 0:
         raise ChatbotRefreshError("git", "git commit failed", detail=err[-2000:])
 
     # Capture the new SHA
-    rc, sha_out, err = await _run([git, "rev-parse", "HEAD"], repo)
+    rc, sha_out, err = await _run([git, "rev-parse", "HEAD"], repo, git_env, timeout=10.0)
     commit_sha = sha_out.strip() if rc == 0 else ""
 
     # Push (assumes credentials configured via gh CLI or system keychain)
-    rc, _, err = await _run([git, "push"], repo)
+    rc, _, err = await _run([git, "push"], repo, git_env, timeout=60.0)
     if rc != 0:
         raise ChatbotRefreshError(
             "git",
