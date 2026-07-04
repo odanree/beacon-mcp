@@ -7,6 +7,7 @@ import logging
 from fastmcp import FastMCP
 
 from server.config import settings
+from server.tools.chatbot import ChatbotRefreshError, refresh_chatbot_rag as _refresh_chatbot_rag
 from server.tools.client import BeaconAuthError, BeaconHTTPError
 from server.tools.jobs import get_job, list_jobs
 from server.tools.profile import (
@@ -26,6 +27,8 @@ mcp = FastMCP(
         "Use beacon_add_project to capture a project for resume generation. "
         "Use beacon_list_projects to see what's already on the profile. "
         "Use beacon_update_project to edit fields on an existing project (e.g. backfill a missing URL). "
+        "Use beacon_refresh_chatbot_rag to rebuild the ai-chatbot's RAG index from Beacon "
+        "(so a project added here reaches the public chatbot on danhle.net without touching the portfolio site). "
         "Use beacon_list_jobs / beacon_get_job to inspect tracked roles. "
         "Auth is a JWT in BEACON_JWT (see README). All tools return clear "
         "errors on 401 so the user knows to refresh the token."
@@ -151,6 +154,35 @@ async def beacon_list_jobs(status: str | None = None, limit: int = 25) -> dict:
         return _err(e, "auth")
     except BeaconHTTPError as e:
         return _err(e, "http")
+
+
+@mcp.tool()
+async def beacon_refresh_chatbot_rag(commit_message: str | None = None) -> dict:
+    """Rebuild the ai-chatbot's RAG index from Beacon and push to origin.
+
+    Sources projects + experiences directly from Beacon (so a project added
+    to Beacon that isn't on the portfolio site still lands in the chatbot).
+    Runs the chatbot's `npm run build:knowledge` script with Beacon creds
+    injected, then commits data/knowledge.json if it changed and pushes to
+    trigger a Vercel deploy.
+
+    Requires two env vars beyond the usual Beacon config:
+      - AI_CHATBOT_PATH: path to a local ai-chatbot git checkout
+      - OPENAI_API_KEY:  used by the build script for embeddings
+
+    Args:
+        commit_message: Optional commit-message override. If omitted, a
+                        standard 'chore(rag): refresh knowledge.json from
+                        Beacon' commit is created.
+
+    Returns a status dict with keys `ok`, `changed`, and either
+    `commit_sha` + `deploy_hint` (when a commit was pushed) or `message`
+    (when the index was byte-identical to HEAD and no commit was needed).
+    """
+    try:
+        return await _refresh_chatbot_rag(commit_message=commit_message)
+    except ChatbotRefreshError as e:
+        return {"ok": False, "error_kind": e.kind, "error": str(e), "detail": e.detail}
 
 
 @mcp.tool()

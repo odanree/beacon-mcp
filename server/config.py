@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     beacon_api_url: str = Field(default="", alias="BEACON_API_URL")
     beacon_jwt: str = Field(default="", alias="BEACON_JWT")
 
+    # Optional — enables `beacon_refresh_chatbot_rag`. Path to a local
+    # checkout of the ai-chatbot repo, and OpenAI creds to run its
+    # embedding build script.
+    ai_chatbot_path: str = Field(default="", alias="AI_CHATBOT_PATH")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @property
