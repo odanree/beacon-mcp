@@ -8,6 +8,8 @@
 |---|---|
 | `beacon_add_project` | POST `/api/profile/projects` — capture a project for resume generation |
 | `beacon_list_projects` | GET `/api/profile/projects` — see what's already on the profile |
+| `beacon_update_project` | PATCH `/api/profile/projects/{id}` — edit an existing project |
+| `beacon_refresh_chatbot_rag` | Rebuild the ai-chatbot's RAG index from Beacon and push (see [ADR 001](docs/adr/001-refresh-chatbot-rag.md)) — a project added here shows up in the public chatbot on danhle.net within ~2 min, no portfolio-site change required |
 | `beacon_list_jobs` | GET `/api/jobs` filtered by pipeline `status` |
 | `beacon_get_job` | GET `/api/jobs/{id}` — full record + JD text |
 
