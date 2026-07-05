@@ -55,7 +55,7 @@ Try:
 
 > "List my Beacon projects."
 >
-> "Add a new Beacon project — name 'beacon-mcp', url 'https://github.com/odanree/beacon-mcp', tech stack ['MCP', 'FastMCP', 'pytest-asyncio'], outcome '4 tools, 9 tests, replaces the curl+JWT+heredoc dance every time I want to update my resume profile.'"
+> "Add a new Beacon project — name 'beacon-mcp', url 'https://github.com/odanree/beacon-mcp', tech stack ['MCP', 'FastMCP', 'pytest-asyncio'], outcome '6 tools, 16 tests (12 unit + 4 upstream-schema contract), replaces the curl+JWT+heredoc dance every time I want to update my resume profile.'"
 >
 > "List my jobs in the screen stage."
 
@@ -66,12 +66,13 @@ pytest
 # All HTTP mocked via respx — no network calls, no real Beacon hits.
 ```
 
-9 tests covering:
-- Authenticated POST flows (project create)
+16 tests covering:
+- Authenticated POST / PATCH flows (project create + partial update)
 - 401 vs 5xx error mapping (clear error kinds — `auth` vs `http`)
 - Missing JWT detection at the client boundary
 - Pagination + status filter param passing
 - Both envelope shapes Beacon endpoints can return (`[…]` and `{items: […]}`)
+- Upstream-schema contract test that pulls Beacon's `api/openapi.json` and verifies our pydantic response models still match — catches renamed fields or scalar-vs-nested-object drift at PR time (skips gracefully when the upstream schema URL is unreachable)
 
 ## Roadmap
 
