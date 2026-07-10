@@ -27,6 +27,20 @@ class Settings(BaseSettings):
     ai_chatbot_path: str = Field(default="", alias="AI_CHATBOT_PATH")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
 
+    # Only used by `server.listener`, not by the MCP server. Direct
+    # Postgres URL to Beacon so the listener can `LISTEN rag_stale`
+    # for event-driven RAG rebuilds. Must include the driver — this
+    # is the raw asyncpg URL (`postgresql://user:pw@host:5432/db`),
+    # NOT the SQLAlchemy `postgresql+asyncpg://` variant.
+    beacon_database_url: str = Field(default="", alias="BEACON_DATABASE_URL")
+
+    # Debounce window for the RAG listener. After a NOTIFY arrives,
+    # wait this many seconds before triggering a rebuild; any further
+    # NOTIFYs in the window reset the timer. Ten seconds is enough to
+    # coalesce a burst of edits (batch project imports, resume-import
+    # backfills) into a single rebuild without adding noticeable lag.
+    rag_debounce_seconds: float = Field(default=10.0, alias="RAG_DEBOUNCE_SECONDS")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @property
