@@ -9,7 +9,7 @@ description = "MCP server wrapping the Beacon job-search-pipeline API so Claude 
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Danh Le", email = "dtle82@gmail.com" }]
+authors = [{ name = "Danh Le", email = "nightseek@yahoo.com" }]
 keywords = ["mcp", "model-context-protocol", "claude", "anthropic", "job-search", "resume"]
 dependencies = [
     "fastmcp>=2.0",
