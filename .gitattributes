@@ -1,0 +1,10 @@
+# Force LF line endings on files that must run inside Linux containers,
+# regardless of the contributor's platform autocrlf setting.
+#
+# Without this, a Windows checkout with core.autocrlf=true would convert
+# entrypoint-listener.sh to CRLF, which breaks `#!/bin/bash` inside the
+# Fargate container (interpreter path becomes `/bin/bash\r` — not found).
+
+*.sh text eol=lf
+deploy/known_hosts text eol=lf
+Dockerfile* text eol=lf
