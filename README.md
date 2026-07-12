@@ -99,34 +99,43 @@ beacon-mcp-listener
 
 Ctrl-C to stop.
 
-Requires the same `AI_CHATBOT_PATH` + `OPENAI_API_KEY` as the manual `beacon_refresh_chatbot_rag` MCP tool, plus:
+Env vars — depends on refresh mode:
 
 | Env var | Purpose |
 |---|---|
-| `BEACON_DATABASE_URL` | Raw asyncpg URL to Beacon's Postgres (no `+asyncpg` driver suffix). Needed to `LISTEN`. |
+| `BEACON_DATABASE_URL` | Raw asyncpg URL to Beacon's Postgres (no `+asyncpg` driver suffix). Always required. |
 | `RAG_DEBOUNCE_SECONDS` | Optional. How long the listener coalesces a burst before rebuilding. Default `10`. |
+| `RAG_REFRESH_MODE` | `local` (default) or `webhook`. See below. |
+| `AI_CHATBOT_PATH` + `OPENAI_API_KEY` | Required when `RAG_REFRESH_MODE=local`. |
+| `VERCEL_DEPLOY_HOOK_URL` | Required when `RAG_REFRESH_MODE=webhook`. Grab from Vercel dashboard → project settings → Git → Deploy Hooks. |
 
-### Deployment status — honest read
+### Refresh modes
+
+- **`local`** (default) — shells out to `bun run src/knowledge/build.ts` in the local ai-chatbot checkout, commits + pushes if `data/knowledge.json` changed. Vercel auto-deploys on the push. Requires local Bun runtime + git-push creds. Backward-compatible with the pre-ADR-021 behavior.
+
+- **`webhook`** (ADR-021 target state) — POSTs to a Vercel Deploy Hook URL. Vercel handles the rebuild via its own `vercel-build` script (which now regenerates knowledge.json from Beacon — see ai-chatbot [PR#62](https://github.com/odanree/ai-chatbot/pull/62)). No local checkout, no local Bun, no local git creds — this is the mode the Fargate deployment (ADR-021 phase 3) uses.
+
+Switching modes is a single env var change (`RAG_REFRESH_MODE`). The MCP tool `beacon_refresh_chatbot_rag` also accepts a `mode` argument for one-off overrides.
+
+### Deployment status — honest read (in progress: [ADR-021](https://github.com/odanree/job-search-pipeline/blob/master/docs/adr/021-cdc-listener-to-fargate.md))
 
 **Where things run today:**
 
 | Component | Where | When active |
 |---|---|---|
 | DB triggers + NOTIFY channel | Beacon Postgres (VPS) | Always |
-| `server/listener.py` | Wherever you start it — today, the operator's laptop | Only while running |
-| `refresh_chatbot_rag()` | Same laptop (needs local Bun + git checkout + push creds) | On demand |
+| `server/listener.py` | Operator's laptop (moving to AWS Fargate in ADR-021 phase 3) | Only while running |
+| `refresh_chatbot_rag()` in `local` mode | Same laptop (needs Bun + git checkout + push creds) | On demand |
+| `refresh_chatbot_rag()` in `webhook` mode | Nowhere local — POSTs to Vercel Deploy Hook, Vercel handles the rebuild | Independent of laptop state |
 
-The triggers are always on. The listener runs on the operator's dev machine because the rebuild pipeline itself is local — moving the listener to a VPS without moving the rebuild there too would give you a listener that catches events but can't act on them.
+**Current state — mid-migration:**
 
-**The gap:** NOTIFY is fire-and-forget. If the listener isn't running when a signal fires, that signal is lost. The RAG stays stale until the next NOTIFY arrives with a running listener — or until the operator runs `beacon_refresh_chatbot_rag` manually. Acceptable for a single-operator portfolio-scale project where writes are infrequent. Not the shape you'd ship for higher write-volume production.
+- ✅ [ADR-021 phase 1](https://github.com/odanree/ai-chatbot/pull/62) — ai-chatbot's `vercel-build` script now regenerates `data/knowledge.json` from Beacon on every deploy (STRICT=false so stale JWT doesn't break code deploys).
+- ✅ ADR-021 phase 2 (this PR) — `refresh_chatbot_rag` learns a `mode` arg. Webhook mode POSTs to a Vercel Deploy Hook; local mode preserves existing behavior.
+- 🚧 ADR-021 phase 3 — Fargate task definition + Terraform. Not yet shipped.
+- ⏳ Phases 4–5 — parallel run, then retire local listener.
 
-### Evolution path when we care to close the gap
-
-1. Move the `data/knowledge.json` build INTO ai-chatbot's Vercel build (needs `BEACON_JWT` as a Vercel env var).
-2. Replace the `bun + git-push` path in `refresh_chatbot_rag()` with a POST to a Vercel Deploy Hook — same trigger effect, zero local dependencies.
-3. Redeploy the listener as a systemd unit or Docker sidecar alongside Beacon on the VPS. Now it's always-on, fully event-driven, operator's laptop out of the loop.
-
-Named here so the migration path is obvious when write volume or availability requirements shift. Not blocking anything today — the current shape is the honest cost/benefit for the current scale.
+**The remaining gap:** in `local` mode, the listener still runs on the operator's laptop and needs local Bun + git creds. This is intentional during the strangler-fig migration — the pre-ADR-021 setup remains available as a fallback. Set `RAG_REFRESH_MODE=webhook` and provide `VERCEL_DEPLOY_HOOK_URL` to move to the new path from your dev machine today; the Fargate task in phase 3 will use the same `webhook` code path.
 
 ## Roadmap
 

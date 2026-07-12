@@ -157,30 +157,46 @@ async def beacon_list_jobs(status: str | None = None, limit: int = 25) -> dict:
 
 
 @mcp.tool()
-async def beacon_refresh_chatbot_rag(commit_message: str | None = None) -> dict:
-    """Rebuild the ai-chatbot's RAG index from Beacon and push to origin.
+async def beacon_refresh_chatbot_rag(
+    mode: str = "local",
+    commit_message: str | None = None,
+) -> dict:
+    """Rebuild the ai-chatbot's RAG index from Beacon.
 
     Sources projects + experiences directly from Beacon (so a project added
     to Beacon that isn't on the portfolio site still lands in the chatbot).
-    Runs the chatbot's `npm run build:knowledge` script with Beacon creds
-    injected, then commits data/knowledge.json if it changed and pushes to
-    trigger a Vercel deploy.
 
-    Requires two env vars beyond the usual Beacon config:
-      - AI_CHATBOT_PATH: path to a local ai-chatbot git checkout
-      - OPENAI_API_KEY:  used by the build script for embeddings
+    Two modes:
+
+      - "local" (default): shells out to `bun run src/knowledge/build.ts`
+        in the local ai-chatbot checkout (AI_CHATBOT_PATH), commits +
+        pushes if data/knowledge.json changed. Vercel auto-deploys on the
+        push. Requires local Bun runtime + git-push credentials.
+        Env: AI_CHATBOT_PATH + OPENAI_API_KEY.
+
+      - "webhook" (ADR-021): POSTs to VERCEL_DEPLOY_HOOK_URL. Vercel
+        rebuilds via its own `vercel-build` script (which regenerates
+        knowledge.json from Beacon). No local checkout, no local Bun,
+        no local push credentials. Fire-and-forget: returns immediately
+        with the Vercel deploy job ID; the deploy itself takes ~30–60s.
+        Env: VERCEL_DEPLOY_HOOK_URL.
 
     Args:
-        commit_message: Optional commit-message override. If omitted, a
-                        standard 'chore(rag): refresh knowledge.json from
-                        Beacon' commit is created.
+        mode: "local" (default) or "webhook". See above.
+        commit_message: Optional commit-message override (local mode only).
 
-    Returns a status dict with keys `ok`, `changed`, and either
-    `commit_sha` + `deploy_hint` (when a commit was pushed) or `message`
-    (when the index was byte-identical to HEAD and no commit was needed).
+    Returns a status dict. Shape varies by mode:
+        local:   {ok, changed, commit_sha?, commit_message?, deploy_hint?, message?}
+        webhook: {ok, mode, deploy_hook_response, deploy_hint}
     """
+    if mode not in ("local", "webhook"):
+        return {
+            "ok": False,
+            "error_kind": "config",
+            "error": f"unknown mode {mode!r} — expected 'local' or 'webhook'.",
+        }
     try:
-        return await _refresh_chatbot_rag(commit_message=commit_message)
+        return await _refresh_chatbot_rag(mode=mode, commit_message=commit_message)  # type: ignore[arg-type]
     except ChatbotRefreshError as e:
         return {"ok": False, "error_kind": e.kind, "error": str(e), "detail": e.detail}
 

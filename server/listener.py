@@ -183,21 +183,23 @@ class RebuildScheduler:
         await self._run_rebuild()
 
     async def _run_rebuild(self) -> None:
-        # `refresh_chatbot_rag` is a subprocess pipeline; serializing
-        # ensures we never have two `bun run` + `git push` invocations
-        # racing. NOTIFYs arriving during a rebuild are captured for
-        # the next window via `_reset_after_rebuild()`.
+        # `refresh_chatbot_rag` is a subprocess pipeline (local mode) or an
+        # HTTP POST (webhook mode); serializing ensures we never fire two
+        # concurrent rebuilds. NOTIFYs arriving during a rebuild are
+        # captured for the next window.
         async with self._lock:
             payloads = list(self._pending_payloads)
             self._pending_payloads.clear()
             self._first_nudge_at = None
+            mode = settings.rag_refresh_mode
             log.info(
-                "rag rebuild triggered by %d NOTIFY events (last: %s)",
+                "rag rebuild triggered by %d NOTIFY events (mode=%s, last: %s)",
                 len(payloads),
+                mode,
                 payloads[-1] if payloads else "<empty>",
             )
             try:
-                result = await refresh_chatbot_rag()
+                result = await refresh_chatbot_rag(mode=mode)  # type: ignore[arg-type]
             except ChatbotRefreshError as exc:
                 log.error(
                     "rag rebuild failed (%s): %s",
@@ -210,7 +212,15 @@ class RebuildScheduler:
                 log.exception("rag rebuild raised unexpectedly")
                 return
 
-            if result.get("changed"):
+            if mode == "webhook":
+                job = result.get("deploy_hook_response", {})
+                job_id = (job.get("job", {}) or {}).get("id", "<unknown>")
+                log.info(
+                    "rag rebuild dispatched to Vercel Deploy Hook — job id %s: %s",
+                    job_id,
+                    result.get("deploy_hint", "-"),
+                )
+            elif result.get("changed"):
                 log.info(
                     "rag rebuild committed %s — Vercel deploy hint: %s",
                     result.get("commit_sha", "<unknown>")[:12],
@@ -296,10 +306,27 @@ async def _run() -> None:
             CHANNEL,
         )
         sys.exit(2)
-    if not settings.ai_chatbot_path or not settings.openai_api_key:
+
+    mode = settings.rag_refresh_mode
+    if mode == "local":
+        if not settings.ai_chatbot_path or not settings.openai_api_key:
+            log.error(
+                "RAG_REFRESH_MODE=local but AI_CHATBOT_PATH or OPENAI_API_KEY "
+                "is unset. Either set both (for local rebuild) or switch to "
+                "RAG_REFRESH_MODE=webhook (needs VERCEL_DEPLOY_HOOK_URL)."
+            )
+            sys.exit(2)
+    elif mode == "webhook":
+        if not settings.vercel_deploy_hook_url:
+            log.error(
+                "RAG_REFRESH_MODE=webhook but VERCEL_DEPLOY_HOOK_URL is unset. "
+                "Set it in .env or switch to RAG_REFRESH_MODE=local."
+            )
+            sys.exit(2)
+    else:
         log.error(
-            "AI_CHATBOT_PATH and OPENAI_API_KEY must be set — the listener "
-            "delegates rebuilds to `refresh_chatbot_rag`, which needs both."
+            "RAG_REFRESH_MODE=%r is unknown — expected 'local' or 'webhook'.",
+            mode,
         )
         sys.exit(2)
 
@@ -321,7 +348,8 @@ async def _run() -> None:
             pass
 
     log.info(
-        "listener started (debounce=%.1fs, max_quiet_wait=%.1fs)",
+        "listener started (mode=%s, debounce=%.1fs, max_quiet_wait=%.1fs)",
+        mode,
         settings.rag_debounce_seconds,
         MAX_QUIET_WAIT,
     )
