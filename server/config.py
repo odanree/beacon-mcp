@@ -21,11 +21,31 @@ class Settings(BaseSettings):
     beacon_api_url: str = Field(default="", alias="BEACON_API_URL")
     beacon_jwt: str = Field(default="", alias="BEACON_JWT")
 
-    # Optional — enables `beacon_refresh_chatbot_rag`. Path to a local
-    # checkout of the ai-chatbot repo, and OpenAI creds to run its
-    # embedding build script.
+    # Optional — enables `beacon_refresh_chatbot_rag` in `local` mode.
+    # Path to a local checkout of the ai-chatbot repo, and OpenAI creds
+    # to run its embedding build script.
     ai_chatbot_path: str = Field(default="", alias="AI_CHATBOT_PATH")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+
+    # Optional — enables `beacon_refresh_chatbot_rag` in `webhook` mode.
+    # Vercel Deploy Hook URL for the ai-chatbot production branch. When
+    # set (and mode="webhook"), the refresh tool POSTs to this URL and
+    # Vercel handles the rebuild via ADR-021 phase 1 wiring — no local
+    # Bun runtime, no local git checkout, no local push credentials.
+    #
+    # Get the URL from Vercel dashboard → project settings → Git → Deploy
+    # Hooks. Store as secret — the URL IS the auth token; anyone who
+    # knows it can trigger deploys.
+    vercel_deploy_hook_url: str = Field(default="", alias="VERCEL_DEPLOY_HOOK_URL")
+
+    # RAG refresh mode used by the listener when it fires a rebuild.
+    # "local"   — the shell-out-to-bun-and-git-push path (default,
+    #             preserves existing behavior).
+    # "webhook" — POST to vercel_deploy_hook_url (ADR-021 target state).
+    # The MCP tool itself exposes both modes and defaults to `local`;
+    # the listener honors this override so cutover can happen without
+    # touching listener code.
+    rag_refresh_mode: str = Field(default="local", alias="RAG_REFRESH_MODE")
 
     # Only used by `server.listener`, not by the MCP server. Direct
     # Postgres URL to Beacon so the listener can `LISTEN rag_stale`

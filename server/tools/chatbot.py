@@ -1,17 +1,33 @@
 """
-`beacon_refresh_chatbot_rag` — rebuild the ai-chatbot's RAG index from Beacon
-and push, so a project added to Beacon reaches the public chatbot without
-touching the portfolio site.
+`beacon_refresh_chatbot_rag` — rebuild the ai-chatbot's RAG index from Beacon,
+so a project added to Beacon reaches the public chatbot without touching the
+portfolio site.
 
-Shells out to `npm run build:knowledge` in the operator-configured local
-ai-chatbot checkout, passing this MCP's Beacon credentials + the operator's
-OPENAI_API_KEY. If the resulting `data/knowledge.json` differs from what's
-committed, stages + commits + pushes — Vercel auto-deploys on push to main.
+Two modes, chosen by the `mode` parameter:
+
+  - `local` (default): shells out to `bun run src/knowledge/build.ts` in the
+    operator-configured local ai-chatbot checkout, then commits + pushes if
+    `data/knowledge.json` changed. Vercel auto-deploys on the push.
+    Requires AI_CHATBOT_PATH + OPENAI_API_KEY + local git-push creds.
+
+  - `webhook` (ADR-021 phase 2+): POSTs to a Vercel Deploy Hook URL. Vercel
+    triggers a fresh build that regenerates knowledge.json against Beacon
+    (via ai-chatbot's `vercel-build` script — see ADR-021 phase 1).
+    Requires VERCEL_DEPLOY_HOOK_URL. No local checkout, no local Bun,
+    no local git creds — this is the mode the Fargate listener uses.
 
 Failure modes surface as structured error envelopes:
-  - `config`: AI_CHATBOT_PATH / OPENAI_API_KEY unset, or path doesn't exist
-  - `build`:  the embed script failed (usually OPENAI or BEACON API-side)
-  - `git`:    stage / commit / push failed
+  - `config`:  required env / path missing for the chosen mode
+  - `build`:   the local embed script failed (local mode only)
+  - `git`:     stage / commit / push failed (local mode only)
+  - `webhook`: Vercel Deploy Hook POST returned non-2xx (webhook mode only)
+
+Future work (see ADR-021 alternatives-considered):
+  HMAC signing on the webhook path. Vercel Deploy Hooks accept unsigned POSTs
+  today — the URL itself is the auth token. If we ever put an API Gateway
+  proxy in front (for rate limiting, IP allowlisting, or audit logging),
+  the payload should carry an HMAC header signed with a shared secret so
+  the proxy can verify the caller. TODO stub at the send-webhook boundary.
 """
 
 from __future__ import annotations
@@ -19,6 +35,9 @@ from __future__ import annotations
 import asyncio
 import shutil
 from pathlib import Path
+from typing import Literal
+
+import httpx
 
 from server.config import settings
 
@@ -72,8 +91,96 @@ async def _run(
     return proc.returncode or 0, out_b.decode("utf-8", errors="replace"), err_b.decode("utf-8", errors="replace")
 
 
-async def refresh_chatbot_rag(commit_message: str | None = None) -> dict:
-    """Do the actual work. Returns a status dict (see main.py tool docstring)."""
+async def refresh_chatbot_rag(
+    mode: Literal["local", "webhook"] = "local",
+    commit_message: str | None = None,
+) -> dict:
+    """Rebuild the ai-chatbot's RAG index.
+
+    Args:
+        mode:
+            "local"   — shell out to bun + git push in a local checkout.
+                        Preserves the pre-ADR-021 behavior (default for
+                        backward compatibility with any existing caller).
+            "webhook" — POST to VERCEL_DEPLOY_HOOK_URL. Vercel handles the
+                        rebuild via ai-chatbot's vercel-build script
+                        (ADR-021 phase 1). No local dependencies.
+        commit_message: Optional commit-message override (local mode only).
+
+    Returns a status dict. Shape varies by mode:
+        local mode:   {ok, changed, commit_sha?, commit_message?, deploy_hint?, message?}
+        webhook mode: {ok, mode, deploy_hook_response, deploy_hint}
+    """
+    if mode == "webhook":
+        return await _refresh_via_webhook()
+    if mode == "local":
+        return await _refresh_via_local(commit_message=commit_message)
+    raise ChatbotRefreshError(
+        "config",
+        f"unknown mode {mode!r} — expected 'local' or 'webhook'.",
+    )
+
+
+async def _refresh_via_webhook() -> dict:
+    """POST to a Vercel Deploy Hook. Returns a status dict.
+
+    Fire-and-forget by design: we send the POST, Vercel enqueues a build,
+    and we return the deploy job identifier. We don't wait for the deploy
+    to finish — it typically takes 30–60 seconds. Caller can poll Vercel
+    or watch the ai-chatbot repo for a fresh commit if they need
+    completion confirmation.
+    """
+    if not settings.vercel_deploy_hook_url:
+        raise ChatbotRefreshError(
+            "config",
+            "VERCEL_DEPLOY_HOOK_URL is not set — cannot trigger webhook rebuild. "
+            "Set it in .env or unset mode='webhook' to fall back to local mode.",
+        )
+
+    # TODO(ADR-021 follow-up): if we ever put an API Gateway proxy in front
+    # of the Deploy Hook (for rate limiting / IP allowlist / audit logging),
+    # add HMAC signing here:
+    #   digest = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    #   headers["X-Beacon-Signature"] = f"sha256={digest}"
+    # For now the Deploy Hook URL is itself the auth token.
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(settings.vercel_deploy_hook_url)
+    except httpx.HTTPError as exc:
+        raise ChatbotRefreshError(
+            "webhook",
+            f"Vercel Deploy Hook POST failed at the transport layer: {exc}",
+            detail=repr(exc),
+        )
+
+    if resp.status_code >= 400:
+        raise ChatbotRefreshError(
+            "webhook",
+            f"Vercel Deploy Hook returned HTTP {resp.status_code}",
+            detail=resp.text[-2000:],
+        )
+
+    # Vercel Deploy Hooks return a body like:
+    # {"job": {"id": "...", "state": "PENDING", "createdAt": ...}}
+    # We surface it verbatim so downstream logging can attribute the deploy.
+    try:
+        payload = resp.json()
+    except ValueError:
+        payload = {"raw": resp.text[:500]}
+
+    return {
+        "ok": True,
+        "mode": "webhook",
+        "deploy_hook_response": payload,
+        "deploy_hint": (
+            "Vercel is building the ai-chatbot from main. Fresh knowledge.json "
+            "lands within ~30–60 seconds via vercel-build → build:knowledge."
+        ),
+    }
+
+
+async def _refresh_via_local(commit_message: str | None = None) -> dict:
+    """Original bun + git-push implementation (unchanged behavior)."""
     if not settings.ai_chatbot_path:
         raise ChatbotRefreshError(
             "config",
