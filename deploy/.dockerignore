@@ -1,0 +1,36 @@
+# Keep the listener image lean — only server/ + deploy/ scripts + deps
+# specified explicitly in the Dockerfile actually need to be in build context.
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Env / secrets — never in an image
+.env
+.env.*
+
+# Dev-only tooling
+.venv/
+venv/
+tests/
+docs/
+
+# CI / repo metadata
+.github/
+.git/
+.gitignore
+.gitattributes
+README.md
+
+# Editor
+.idea/
+.vscode/
+*.swp

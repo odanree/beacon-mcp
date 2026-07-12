@@ -1,0 +1,120 @@
+name: Build & push listener image
+
+# Builds the CDC listener container image and pushes it to ECR.
+# Assumes an OIDC-federated IAM role provisioned in portfolio-infra
+# (aws_iam_role.gh_actions_beacon_mcp). PR builds run docker-build for
+# verification only — no push, no AWS credentials assumed.
+#
+# ADR-021 phase 3c.
+
+on:
+  push:
+    branches: [master]
+    # Skip pushes that only touch code the listener image doesn't include —
+    # tests, MCP-server-only code, docs, workflows themselves.
+    paths:
+      - "server/**"
+      - "deploy/**"
+      - "pyproject.toml"
+      - ".github/workflows/build-listener-image.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "server/**"
+      - "deploy/**"
+      - "pyproject.toml"
+      - ".github/workflows/build-listener-image.yml"
+
+# OIDC needs id-token: write. contents: read is default for actions/checkout.
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: marquez-oci/beacon-cdc-listener
+  # OIDC-federated role ARN. Assembled from a repo-level GitHub Actions
+  # variable (`AWS_ACCOUNT_ID`) rather than hardcoded, so the account
+  # ID stays out of a public repo. The trust policy on the role side
+  # (see portfolio-infra: aws_iam_role.gh_actions_beacon_mcp) restricts
+  # assumption to this repo's master + tag refs — so even if the ARN
+  # is guessed, it can't be assumed from anywhere else.
+  #
+  # Set AWS_ACCOUNT_ID via: gh variable set AWS_ACCOUNT_ID -b '<12-digit-id>'
+  AWS_ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gh-actions-beacon-mcp
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # PR builds stop here — build-only verification with no push.
+      # This catches Dockerfile regressions before they reach master.
+      - name: Build (verification only — no push on PR)
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/Dockerfile.listener
+          push: false
+          tags: beacon-mcp-listener:pr-${{ github.event.pull_request.number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Master pushes get AWS creds + push to ECR.
+      - name: Configure AWS credentials via OIDC
+        if: github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        if: github.event_name == 'push'
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Compute image tags
+        if: github.event_name == 'push'
+        id: tags
+        run: |
+          REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          SHA="${GITHUB_SHA::12}"
+          echo "sha_tag=${REGISTRY}/${ECR_REPOSITORY}:${SHA}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=${REGISTRY}/${ECR_REPOSITORY}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push to ECR
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/Dockerfile.listener
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.sha_tag }}
+            ${{ steps.tags.outputs.latest_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # provenance:false keeps the manifest single-arch — Fargate
+          # doesn't consume OCI attestations and the manifest list
+          # confuses ECS's image resolution.
+          provenance: false
+
+      - name: Print image URI
+        if: github.event_name == 'push'
+        run: |
+          echo "Pushed:"
+          echo "  ${{ steps.tags.outputs.sha_tag }}"
+          echo "  ${{ steps.tags.outputs.latest_tag }}"
+          echo ""
+          echo "To roll the ECS service to this image:"
+          echo "  aws ecs update-service \\"
+          echo "    --cluster marquez-oci-cdc \\"
+          echo "    --service marquez-oci-cdc-listener \\"
+          echo "    --force-new-deployment"
