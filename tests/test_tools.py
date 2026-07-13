@@ -10,10 +10,15 @@ import server.config as cfg_module
 from server.tools.client import BeaconAuthError, BeaconHTTPError, request
 from server.tools.jobs import get_job, list_jobs
 from server.tools.profile import (
+    ExperienceCreate,
+    ExperienceUpdate,
     ProjectCreate,
     ProjectUpdate,
+    add_experience,
     add_project,
+    list_experiences,
     list_projects,
+    update_experience,
     update_project,
 )
 
@@ -139,6 +144,130 @@ async def test_beacon_update_project_tool_forwards_talking_points():
     # None-default siblings still dropped by the supplied-only filter.
     for absent in ('"name"', '"description"', '"outcome"', '"url"'):
         assert absent not in body, f"PATCH body should not include {absent}: {body}"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_add_experience_posts_and_returns_envelope():
+    route = respx.post("https://beacon.test/api/profile/experiences").mock(
+        return_value=httpx.Response(
+            201,
+            json={
+                "id": "exp-1",
+                "company": "Ultra Mobile",
+                "title": "Software Engineer 2",
+                "start_date": "2022-05-01",
+                "end_date": "2026-01-01",
+                "is_current": False,
+                "location": "Orange, CA",
+                "description": "d",
+                "tech_stack": ["React", "TypeScript"],
+                "impact_metrics": "3 sprints → 1",
+                "talking_points": None,
+            },
+        )
+    )
+    e = ExperienceCreate(
+        company="Ultra Mobile",
+        title="Software Engineer 2",
+        start_date="2022-05-01",
+        end_date="2026-01-01",
+        location="Orange, CA",
+        description="d",
+        tech_stack=["React", "TypeScript"],
+        impact_metrics="3 sprints → 1",
+    )
+    out = await add_experience(e)
+    assert out.id == "exp-1"
+    assert out.tech_stack == ["React", "TypeScript"]
+    body = route.calls[0].request.content.decode()
+    assert "Ultra Mobile" in body
+    assert route.calls[0].request.headers["Authorization"] == "Bearer test-jwt-token"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_update_experience_puts_only_supplied_fields():
+    route = respx.put("https://beacon.test/api/profile/experiences/exp-1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "exp-1",
+                "company": "Ultra Mobile",
+                "title": "Software Engineer 2",
+                "start_date": "2022-05-01",
+                "end_date": None,
+                "is_current": False,
+                "location": None,
+                "description": None,
+                "tech_stack": [],
+                "impact_metrics": None,
+                "talking_points": "STAR: 404 during release call...",
+            },
+        )
+    )
+    out = await update_experience(
+        "exp-1",
+        ExperienceUpdate(talking_points="STAR: 404 during release call..."),
+    )
+    assert out.talking_points == "STAR: 404 during release call..."
+    body = route.calls[0].request.content.decode()
+    assert '"talking_points"' in body
+    assert "404 during release call" in body
+    # exclude_unset=True drops every field the caller didn't touch
+    for absent in ('"company"', '"title"', '"description"', '"impact_metrics"'):
+        assert absent not in body, f"PUT body should not include {absent}: {body}"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_beacon_update_experience_tool_forwards_talking_points():
+    """talking_points on the tool → Pydantic → PUT body, siblings dropped."""
+    from server.main import beacon_update_experience
+
+    route = respx.put("https://beacon.test/api/profile/experiences/exp-1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "exp-1",
+                "company": "Ultra Mobile",
+                "title": "Software Engineer 2",
+                "start_date": "2022-05-01",
+                "end_date": None,
+                "is_current": False,
+                "location": None,
+                "description": None,
+                "tech_stack": [],
+                "impact_metrics": None,
+                "talking_points": "STAR: 404 debug",
+            },
+        )
+    )
+    out = await beacon_update_experience(
+        experience_id="exp-1", talking_points="STAR: 404 debug"
+    )
+    assert out["ok"] is True
+    assert out["experience"]["talking_points"] == "STAR: 404 debug"
+    body = route.calls[0].request.content.decode()
+    assert '"talking_points"' in body
+    for absent in (
+        '"company"',
+        '"title"',
+        '"description"',
+        '"impact_metrics"',
+        '"tech_stack"',
+    ):
+        assert absent not in body, f"PUT body should not include {absent}: {body}"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_list_experiences_returns_empty_when_envelope_is_not_a_list():
+    respx.get("https://beacon.test/api/profile/experiences").mock(
+        return_value=httpx.Response(200, json={"unexpected": "shape"}),
+    )
+    out = await list_experiences()
+    assert out == []
 
 
 @respx.mock

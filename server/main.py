@@ -11,10 +11,15 @@ from server.tools.chatbot import ChatbotRefreshError, refresh_chatbot_rag as _re
 from server.tools.client import BeaconAuthError, BeaconHTTPError
 from server.tools.jobs import get_job, list_jobs
 from server.tools.profile import (
+    ExperienceCreate,
+    ExperienceUpdate,
     ProjectCreate,
     ProjectUpdate,
+    add_experience,
     add_project,
+    list_experiences,
     list_projects,
+    update_experience,
     update_project,
 )
 
@@ -27,6 +32,7 @@ mcp = FastMCP(
         "Use beacon_add_project to capture a project for resume generation. "
         "Use beacon_list_projects to see what's already on the profile. "
         "Use beacon_update_project to edit fields on an existing project (e.g. backfill a missing URL). "
+        "Use beacon_add_experience / beacon_list_experiences / beacon_update_experience for work-history rows. "
         "Use beacon_refresh_chatbot_rag to rebuild the ai-chatbot's RAG index from Beacon "
         "(so a project added here reaches the public chatbot on danhle.net without touching the portfolio site). "
         "Use beacon_list_jobs / beacon_get_job to inspect tracked roles. "
@@ -143,6 +149,128 @@ async def beacon_update_project(
     try:
         result = await update_project(project_id, ProjectUpdate(**supplied))
         return {"ok": True, "project": result.model_dump()}
+    except BeaconAuthError as e:
+        return _err(e, "auth")
+    except BeaconHTTPError as e:
+        return _err(e, "http")
+
+
+@mcp.tool()
+async def beacon_add_experience(
+    company: str,
+    title: str,
+    start_date: str,
+    end_date: str | None = None,
+    is_current: bool = False,
+    location: str | None = None,
+    description: str | None = None,
+    tech_stack: list[str] | None = None,
+    impact_metrics: str | None = None,
+    talking_points: str | None = None,
+) -> dict:
+    """Add a work-history entry to the Beacon profile.
+
+    Args:
+        company:        Employer name shown on resume.
+        title:          Role title shown on resume.
+        start_date:     YYYY-MM-DD.
+        end_date:       YYYY-MM-DD, or omit for ongoing / current roles.
+        is_current:     Set True when the role is ongoing; end_date is ignored.
+        location:       City / metro / "Remote".
+        description:    Bullet-formatted responsibilities + achievements. Surfaces
+                        on resume via phase 4.
+        tech_stack:     List of tools / frameworks. Resume generator matches
+                        against JD keywords.
+        impact_metrics: Concrete outcomes (percentages, dollars, counts).
+                        Surfaces on resume as an italicized impact line.
+        talking_points: Interview-only prose — STAR stories, mentorship arcs,
+                        behavioral-question context. Read by interview prep
+                        and the ai-chatbot; deliberately withheld from resume.
+    """
+    try:
+        result = await add_experience(
+            ExperienceCreate(
+                company=company,
+                title=title,
+                start_date=start_date,
+                end_date=end_date,
+                is_current=is_current,
+                location=location,
+                description=description,
+                tech_stack=tech_stack or [],
+                impact_metrics=impact_metrics,
+                talking_points=talking_points,
+            )
+        )
+        return {"ok": True, "experience": result.model_dump()}
+    except BeaconAuthError as e:
+        return _err(e, "auth")
+    except BeaconHTTPError as e:
+        return _err(e, "http")
+
+
+@mcp.tool()
+async def beacon_list_experiences() -> dict:
+    """List every work-history entry currently on your Beacon profile."""
+    try:
+        rows = await list_experiences()
+        return {
+            "ok": True,
+            "count": len(rows),
+            "experiences": [r.model_dump() for r in rows],
+        }
+    except BeaconAuthError as e:
+        return _err(e, "auth")
+    except BeaconHTTPError as e:
+        return _err(e, "http")
+
+
+@mcp.tool()
+async def beacon_update_experience(
+    experience_id: str,
+    company: str | None = None,
+    title: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    is_current: bool | None = None,
+    location: str | None = None,
+    description: str | None = None,
+    tech_stack: list[str] | None = None,
+    impact_metrics: str | None = None,
+    talking_points: str | None = None,
+) -> dict:
+    """Update fields on an existing Beacon experience row. Only supplied fields
+    are changed — Beacon's endpoint applies exclude_unset semantics.
+
+    Args:
+        experience_id:  UUID of the experience (from beacon_list_experiences).
+        talking_points: New interview-only prose, or omit to leave unchanged.
+                        Never rendered on a resume; used by interview prep
+                        and the ai-chatbot RAG.
+        (all others):   Omit to leave unchanged.
+    """
+    # Only pass kwargs the caller actually supplied — otherwise Pydantic marks
+    # every None as "set" and exclude_unset can't strip them, so the PUT body
+    # would clear unrelated fields.
+    supplied = {
+        k: v
+        for k, v in {
+            "company": company,
+            "title": title,
+            "start_date": start_date,
+            "end_date": end_date,
+            "is_current": is_current,
+            "location": location,
+            "description": description,
+            "tech_stack": tech_stack,
+            "impact_metrics": impact_metrics,
+            "talking_points": talking_points,
+        }.items()
+        if v is not None
+    }
+    try:
+        result = await update_experience(experience_id, ExperienceUpdate(**supplied))
+        return {"ok": True, "experience": result.model_dump()}
     except BeaconAuthError as e:
         return _err(e, "auth")
     except BeaconHTTPError as e:
