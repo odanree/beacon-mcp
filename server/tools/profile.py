@@ -13,13 +13,20 @@ from server.tools.client import request
 
 
 class ProjectCreate(BaseModel):
-    """Mirrors Beacon's POST /api/profile/projects body."""
+    """Mirrors Beacon's POST /api/profile/projects body.
+
+    `talking_points` is the interview-prep prose surface: narrative framing,
+    cross-links, meta-loops. It is deliberately withheld from resume
+    generation (read-path separation) and only feeds interview-prep + the
+    ai-chatbot RAG.
+    """
 
     name: str
     description: str | None = None
     url: str | None = None
     tech_stack: list[str] = Field(default_factory=list)
     outcome: str | None = None
+    talking_points: str | None = None
     start_date: str | None = None     # YYYY-MM-DD
     end_date: str | None = None
 
@@ -32,6 +39,7 @@ class ProjectUpdate(BaseModel):
     url: str | None = None
     tech_stack: list[str] | None = None
     outcome: str | None = None
+    talking_points: str | None = None
     start_date: str | None = None
     end_date: str | None = None
 
@@ -45,6 +53,7 @@ class ProjectSummary(BaseModel):
     tech_stack: list[str] = Field(default_factory=list)
     description: str | None = None
     outcome: str | None = None
+    talking_points: str | None = None
     start_date: str | None = None
     end_date: str | None = None
 

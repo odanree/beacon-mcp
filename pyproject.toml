@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beacon-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server wrapping the Beacon job-search-pipeline API so Claude Code can add projects, search jobs, score resumes, and pull JD insights without curl-and-cookie gymnastics."
 readme = "README.md"
 requires-python = ">=3.11"

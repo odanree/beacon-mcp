@@ -89,7 +89,55 @@ async def test_beacon_update_project_tool_omits_none_defaults():
     assert out["ok"] is True
     body = route.calls[0].request.content.decode()
     assert '"url"' in body
-    for absent in ('"name"', '"description"', '"tech_stack"', '"outcome"', '"start_date"', '"end_date"'):
+    for absent in (
+        '"name"',
+        '"description"',
+        '"tech_stack"',
+        '"outcome"',
+        '"talking_points"',
+        '"start_date"',
+        '"end_date"',
+    ):
+        assert absent not in body, f"PATCH body should not include {absent}: {body}"
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_beacon_update_project_tool_forwards_talking_points():
+    """talking_points round-trips through the tool → Pydantic → PATCH body.
+
+    Read-path separation: talking_points is set here so interview prep
+    and the ai-chatbot can read it, but Beacon's resume generator and
+    Qdrant bullet index deliberately ignore the field.
+    """
+    from server.main import beacon_update_project
+
+    route = respx.patch("https://beacon.test/api/profile/projects/abc-123").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "abc-123",
+                "name": "x",
+                "url": None,
+                "tech_stack": [],
+                "description": None,
+                "outcome": None,
+                "talking_points": "the meta-loop framing",
+                "start_date": None,
+                "end_date": None,
+            },
+        )
+    )
+    out = await beacon_update_project(
+        project_id="abc-123", talking_points="the meta-loop framing"
+    )
+    assert out["ok"] is True
+    assert out["project"]["talking_points"] == "the meta-loop framing"
+    body = route.calls[0].request.content.decode()
+    assert '"talking_points"' in body
+    assert "the meta-loop framing" in body
+    # None-default siblings still dropped by the supplied-only filter.
+    for absent in ('"name"', '"description"', '"outcome"', '"url"'):
         assert absent not in body, f"PATCH body should not include {absent}: {body}"
 
 

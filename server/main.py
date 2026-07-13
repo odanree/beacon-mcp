@@ -47,20 +47,24 @@ async def beacon_add_project(
     url: str | None = None,
     tech_stack: list[str] | None = None,
     outcome: str | None = None,
+    talking_points: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict:
     """Add a project to the Beacon profile. Used by the resume generator.
 
     Args:
-        name:        Short project name shown on resume bullets.
-        description: 2-4 sentence project description. Surfaced verbatim in bullets.
-        url:         Live demo or GitHub URL — anything clickable.
-        tech_stack:  List of tools / frameworks / models. Resume generator
-                     uses this to match against JD keywords.
-        outcome:     Concrete result paragraph (metrics, lessons, scope).
-        start_date:  YYYY-MM-DD.
-        end_date:    YYYY-MM-DD or leave blank for ongoing work.
+        name:           Short project name shown on resume bullets.
+        description:    2-4 sentence project description. Surfaced verbatim in bullets.
+        url:            Live demo or GitHub URL — anything clickable.
+        tech_stack:     List of tools / frameworks / models. Resume generator
+                        uses this to match against JD keywords.
+        outcome:        Concrete result paragraph (metrics, lessons, scope).
+        talking_points: Interview-only prose — narrative framing, cross-links,
+                        meta-loops. Read by interview prep and the ai-chatbot;
+                        deliberately withheld from resume generation.
+        start_date:     YYYY-MM-DD.
+        end_date:       YYYY-MM-DD or leave blank for ongoing work.
     """
     try:
         result = await add_project(ProjectCreate(
@@ -69,6 +73,7 @@ async def beacon_add_project(
             url=url,
             tech_stack=tech_stack or [],
             outcome=outcome,
+            talking_points=talking_points,
             start_date=start_date,
             end_date=end_date,
         ))
@@ -99,20 +104,24 @@ async def beacon_update_project(
     url: str | None = None,
     tech_stack: list[str] | None = None,
     outcome: str | None = None,
+    talking_points: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> dict:
     """Update fields on an existing Beacon project. Only supplied fields are changed.
 
     Args:
-        project_id:  UUID of the project (from beacon_list_projects).
-        name:        New project name, or omit to leave unchanged.
-        description: New description, or omit to leave unchanged.
-        url:         New live demo or GitHub URL, or omit to leave unchanged.
-        tech_stack:  Replacement tech stack list, or omit to leave unchanged.
-        outcome:     New outcome paragraph, or omit to leave unchanged.
-        start_date:  YYYY-MM-DD, or omit to leave unchanged.
-        end_date:    YYYY-MM-DD, or omit to leave unchanged.
+        project_id:     UUID of the project (from beacon_list_projects).
+        name:           New project name, or omit to leave unchanged.
+        description:    New description, or omit to leave unchanged.
+        url:            New live demo or GitHub URL, or omit to leave unchanged.
+        tech_stack:     Replacement tech stack list, or omit to leave unchanged.
+        outcome:        New outcome paragraph, or omit to leave unchanged.
+        talking_points: New interview-only prose, or omit to leave unchanged.
+                        Never rendered on a resume; used by interview prep
+                        and the ai-chatbot RAG.
+        start_date:     YYYY-MM-DD, or omit to leave unchanged.
+        end_date:       YYYY-MM-DD, or omit to leave unchanged.
     """
     # Only pass kwargs the caller actually supplied — otherwise Pydantic marks
     # every None as "set" and exclude_unset can't strip them, so the PATCH
@@ -125,6 +134,7 @@ async def beacon_update_project(
             "url": url,
             "tech_stack": tech_stack,
             "outcome": outcome,
+            "talking_points": talking_points,
             "start_date": start_date,
             "end_date": end_date,
         }.items()
