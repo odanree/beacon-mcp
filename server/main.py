@@ -7,7 +7,8 @@ import logging
 from fastmcp import FastMCP
 
 from server.config import settings
-from server.tools.chatbot import ChatbotRefreshError, refresh_chatbot_rag as _refresh_chatbot_rag
+from server.tools.chatbot import ChatbotRefreshError
+from server.tools.chatbot import refresh_chatbot_rag as _refresh_chatbot_rag
 from server.tools.client import BeaconAuthError, BeaconHTTPError
 from server.tools.jobs import get_job, list_jobs
 from server.tools.profile import (

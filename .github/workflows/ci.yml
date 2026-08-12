@@ -20,8 +20,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # Pin ruff so a new upstream release can't silently break scheduled runs
+      # by enabling new default rules against unchanged code (2026-07-24 was
+      # exactly that failure mode). Bump deliberately when we're ready to
+      # address whatever new rules a version adds.
       - name: Install ruff
-        run: pip install ruff
+        run: pip install "ruff==0.16.2"
       - run: ruff check server tests
 
   test:

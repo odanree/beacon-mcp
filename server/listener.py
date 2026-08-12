@@ -237,7 +237,7 @@ class RebuildScheduler:
             self._timer_task.cancel()
             try:
                 await self._timer_task
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110 — cancellation cleanup: swallow anything the cancelled task raises
                 pass
 
 
@@ -274,7 +274,7 @@ async def _listen_loop(scheduler: RebuildScheduler, stop_event: asyncio.Event) -
             if conn is not None:
                 try:
                     await conn.close(timeout=5.0)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 — connection already broken; close-time errors are noise
                     pass
 
         if stop_event.is_set():
@@ -282,7 +282,7 @@ async def _listen_loop(scheduler: RebuildScheduler, stop_event: asyncio.Event) -
 
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=delay)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         delay = min(delay * 2, MAX_RECONNECT_DELAY)
 
