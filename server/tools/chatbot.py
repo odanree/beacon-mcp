@@ -77,11 +77,11 @@ async def _run(
     )
     try:
         out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         try:
             await proc.wait()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — subprocess already killed; wait errors are cleanup noise
             pass
         raise ChatbotRefreshError(
             "timeout",
